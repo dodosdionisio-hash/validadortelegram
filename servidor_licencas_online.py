@@ -394,10 +394,19 @@ def admin_estatisticas():
 
 @app.route('/health', methods=['GET'])
 def health():
-    """Health check"""
+    """Health check com lista de endpoints"""
     return jsonify({
         'status': 'online',
-        'timestamp': datetime.now().isoformat()
+        'versao': '2.0',
+        'timestamp': datetime.now().isoformat(),
+        'endpoints': {
+            'validar': 'POST /api/validar',
+            'adicionar': 'POST /api/admin/adicionar',
+            'bloquear': 'POST /api/admin/bloquear',
+            'desbloquear': 'POST /api/admin/desbloquear',
+            'listar': 'GET /api/admin/listar',
+            'estatisticas': 'GET /api/admin/estatisticas'
+        }
     })
 
 
