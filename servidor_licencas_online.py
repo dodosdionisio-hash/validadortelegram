@@ -3,6 +3,7 @@
 """
 SERVIDOR DE VALIDAÇÃO DE LICENÇAS ONLINE
 =========================================
+Versão: 2.0 - Atualizado em 20/11/2025
 
 Este servidor fica online 24/7 e valida as licenças dos clientes em tempo real.
 
