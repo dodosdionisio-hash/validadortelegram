@@ -95,11 +95,18 @@ def require_api_key(f):
     return decorated_function
 
 def require_admin(f):
-    """Decorator para exigir senha de admin"""
+    """Decorator para exigir API Key e senha de admin"""
     def decorated_function(*args, **kwargs):
+        # Verifica API Key
+        api_key = request.headers.get('X-API-Key')
+        if api_key != API_KEY:
+            return jsonify({'error': 'API Key inválida'}), 401
+        
+        # Verifica senha admin
         password = request.headers.get('X-Admin-Password')
         if password != ADMIN_PASSWORD:
             return jsonify({'error': 'Senha de admin inválida'}), 401
+        
         return f(*args, **kwargs)
     decorated_function.__name__ = f.__name__
     return decorated_function
