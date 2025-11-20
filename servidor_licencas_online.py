@@ -36,8 +36,8 @@ CORS(app)  # Permite requisições de qualquer origem
 # Arquivo de banco de dados (em produção, use PostgreSQL/MySQL)
 ARQUIVO_LICENCAS = 'licencas_online.json'
 
-# Senha de administrador (MUDE ISSO!)
-ADMIN_PASSWORD = 'SUA_SENHA_SECRETA_AQUI_123'
+# Senha de administrador - Lê da variável de ambiente ou usa padrão
+ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD', 'SUA_SENHA_SECRETA_AQUI_123')
 
 
 def carregar_licencas():
