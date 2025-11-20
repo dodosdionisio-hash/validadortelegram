@@ -477,7 +477,9 @@ def revoke_license(license_key):
 # INICIALIZAÇÃO
 # ============================================================================
 
+# Inicializa o banco ao importar (necessário para Gunicorn)
+init_db()
+
 if __name__ == '__main__':
-    init_db()
     port = int(os.environ.get('PORT', 5000))
     app.run(host='0.0.0.0', port=port)
