@@ -419,9 +419,10 @@ def validate_license():
         }), 403
     
     # Atualiza último check
+    last_check_time = now.isoformat()
     db.execute(
         'UPDATE licenses SET last_check = ? WHERE id = ?',
-        (now.isoformat(), license_id)
+        (last_check_time, license_id)
     )
     db.commit()
     
@@ -438,7 +439,9 @@ def validate_license():
         'plan': license_dict['plan'],
         'bound_hwid': bound_hwid,
         'days_remaining': days_remaining,
-        'status': 'active'
+        'status': 'active',
+        'client_name': license_dict.get('client_name', 'Não informado'),
+        'last_check_at': last_check_time
     })
 
 @app.route('/api/licenses/create', methods=['POST'])
