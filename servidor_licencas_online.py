@@ -49,6 +49,59 @@ def dict_from_row(row):
     else:
         return dict(row)
 
+def execute_query(conn, query, params=None):
+    """Executa query compatível com ambos os bancos"""
+    if USE_POSTGRES:
+        # PostgreSQL usa %s
+        query = query.replace('?', '%s')
+        cur = conn.cursor()
+        if params:
+            cur.execute(query, params)
+        else:
+            cur.execute(query)
+        return cur
+    else:
+        # SQLite usa ?
+        if params:
+            return conn.execute(query, params)
+        else:
+            return conn.execute(query)
+
+# Monkey patch para db.execute funcionar com ambos
+class DBWrapper:
+    def __init__(self, conn):
+        self.conn = conn
+        self._cursor = None
+        
+    def execute(self, query, params=None):
+        self._cursor = execute_query(self.conn, query, params)
+        return self
+    
+    def fetchone(self):
+        return self._cursor.fetchone() if self._cursor else None
+    
+    def fetchall(self):
+        return self._cursor.fetchall() if self._cursor else []
+    
+    def commit(self):
+        self.conn.commit()
+    
+    def close(self):
+        if USE_POSTGRES and self._cursor:
+            self._cursor.close()
+        self.conn.close()
+    
+    @property
+    def total_changes(self):
+        if USE_POSTGRES:
+            return self._cursor.rowcount if self._cursor else 0
+        else:
+            return self.conn.total_changes
+
+def get_db_wrapped():
+    """Retorna conexão com wrapper compatível"""
+    return DBWrapper(get_db())
+
 def init_db():
     """Inicializa o banco de dados"""
     conn = get_db()
@@ -190,7 +243,7 @@ def require_admin(f):
 
 def log_validation(license_key, hwid, result, detected_hwid, message, ip):
     """Registra log de validação"""
-    db = get_db()
+    db = get_db_wrapped()
     db.execute('''
         INSERT INTO validation_logs 
         (license_key, hwid, checked_at, ip_address, result, detected_hwid, message)
@@ -201,7 +254,7 @@ def log_validation(license_key, hwid, result, detected_hwid, message, ip):
 
 def log_hwid_change(license_id, old_hwid, new_hwid, reason, admin_user='system'):
     """Registra mudança de HWID"""
-    db = get_db()
+    db = get_db_wrapped()
     db.execute('''
         INSERT INTO hwid_changes 
         (license_id, old_hwid, new_hwid, changed_at, reason, admin_user)
@@ -267,7 +320,7 @@ def validate_license():
             'message': 'Chave de licença e HWID são obrigatórios'
         }), 400
     
-    db = get_db()
+    db = get_db_wrapped()
     license_row = db.execute(
         'SELECT * FROM licenses WHERE license_key = ?',
         (license_key,)
@@ -411,7 +464,7 @@ def create_license():
     now = datetime.now()
     expires_at = now + timedelta(days=duration_days)
     
-    db = get_db()
+    db = get_db_wrapped()
     try:
         db.execute('''
             INSERT INTO licenses 
@@ -419,27 +472,27 @@ def create_license():
             VALUES (?, ?, ?, ?, ?, 'active', ?)
         ''', (license_key, hwid, plan, now.isoformat(), expires_at.isoformat(), client_name))
         db.commit()
-        license_id = db.execute('SELECT last_insert_rowid()').fetchone()[0]
         db.close()
         
         return jsonify({
             'success': True,
-            'license_id': license_id,
             'license_key': license_key,
-            'hwid': hwid,
             'client_name': client_name,
+            'created_at': now.isoformat(),
             'expires_at': expires_at.isoformat(),
             'plan': plan
         })
-    except sqlite3.IntegrityError:
+    except Exception as e:
         db.close()
-        return jsonify({'error': 'Licença já existe'}), 409
+        if 'unique' in str(e).lower() or 'duplicate' in str(e).lower():
+            return jsonify({'error': 'Licença já existe'}), 409
+        return jsonify({'error': str(e)}), 500
 
 @app.route('/api/licenses/unbind/<license_key>', methods=['POST'])
 @require_admin
 def unbind_license(license_key):
     """Desvincula licença de um PC (para permitir troca de computador)"""
-    db = get_db()
+    db = get_db_wrapped()
     license_row = db.execute(
         'SELECT * FROM licenses WHERE license_key = ?',
         (license_key,)
@@ -472,7 +525,7 @@ def unbind_license(license_key):
 @require_admin
 def unblock_license(license_key):
     """Desbloqueia licença que foi bloqueada por uso múltiplo"""
-    db = get_db()
+    db = get_db_wrapped()
     db.execute('''
         UPDATE licenses 
         SET status = 'active'
@@ -494,7 +547,7 @@ def unblock_license(license_key):
 @require_admin
 def get_license(license_key):
     """Consulta informações de uma licença"""
-    db = get_db()
+    db = get_db_wrapped()
     license_row = db.execute(
         'SELECT * FROM licenses WHERE license_key = ?',
         (license_key,)
@@ -515,19 +568,24 @@ def list_licenses():
     """Lista todas as licenças"""
     status_filter = request.args.get('status')
     
-    db = get_db()
+    conn = get_db()
+    
     if status_filter:
-        rows = db.execute(
+        cur = execute_query(conn,
             'SELECT * FROM licenses WHERE status = ? ORDER BY created_at DESC',
             (status_filter,)
-        ).fetchall()
+        )
     else:
-        rows = db.execute(
+        cur = execute_query(conn,
             'SELECT * FROM licenses ORDER BY created_at DESC'
-        ).fetchall()
+        )
     
+    rows = cur.fetchall()
     licenses = [dict(row) for row in rows]
-    db.close()
+    
+    if USE_POSTGRES:
+        cur.close()
+    conn.close()
     
     return jsonify(licenses)
 
@@ -535,19 +593,25 @@ def list_licenses():
 @require_admin
 def revoke_license(license_key):
     """Revoga uma licença"""
-    db = get_db()
-    db.execute('''
+    conn = get_db()
+    cur = execute_query(conn, '''
         UPDATE licenses 
         SET status = 'revoked'
         WHERE license_key = ?
     ''', (license_key,))
-    db.commit()
+    conn.commit()
     
-    if db.total_changes == 0:
-        db.close()
+    if USE_POSTGRES:
+        affected = cur.rowcount
+        cur.close()
+    else:
+        affected = conn.total_changes
+    
+    conn.close()
+    
+    if affected == 0:
         return jsonify({'error': 'Licença não encontrada'}), 404
     
-    db.close()
     return jsonify({
         'success': True,
         'message': 'Licença revogada'
