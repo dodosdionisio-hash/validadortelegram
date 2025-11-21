@@ -3,8 +3,8 @@ services:
     name: validador-licencas
     env: python
     plan: free
-    buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn servidor_licencas_v3:app
+    buildCommand: pip install --upgrade pip && pip install -r requirements.txt
+    startCommand: gunicorn servidor_licencas_online:app
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11.0
+        value: 3.11.9
