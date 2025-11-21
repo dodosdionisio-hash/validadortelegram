@@ -395,7 +395,12 @@ def validate_license():
         }), 403
     
     # Verifica expiração
-    expires_at = datetime.fromisoformat(expires_at_str)
+    # Converte para string se necessário (PostgreSQL pode retornar datetime)
+    if isinstance(expires_at_str, str):
+        expires_at = datetime.fromisoformat(expires_at_str)
+    else:
+        expires_at = expires_at_str  # Já é datetime
+    
     now = datetime.now()
     
     if now > expires_at:
