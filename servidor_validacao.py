@@ -17,6 +17,30 @@ CHAVE_SECRETA = "CRIATIVA_2025_LICENCA_SEGURA_XYZ789_PRIVADA"
 GRACE_PERIOD_DIAS = 30
 
 
+def init_db():
+    """Garante que a tabela de licenças exista (mesmo schema do bot)."""
+    db = sqlite3.connect('licencas.db')
+    db.execute('''
+        CREATE TABLE IF NOT EXISTS licencas (
+            codigo TEXT PRIMARY KEY,
+            cliente TEXT NOT NULL,
+            dias_validade INTEGER NOT NULL,
+            data_criacao TEXT NOT NULL,
+            data_expiracao TEXT NOT NULL,
+            hwid TEXT,
+            data_ativacao TEXT,
+            status TEXT NOT NULL,
+            observacoes TEXT
+        )
+    ''')
+    db.commit()
+    db.close()
+
+
+# Garante que o banco esteja pronto ao iniciar o servidor
+init_db()
+
+
 def get_db():
     """Conecta ao banco de licenças do bot"""
     db = sqlite3.connect('licencas.db')
