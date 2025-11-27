@@ -262,9 +262,12 @@ def status():
         db = get_db()
         cursor = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) if _is_postgres() else db.cursor()
         
-        total = cursor.execute('SELECT COUNT(*) FROM licencas').fetchone()[0]
-        ativas = cursor.execute("SELECT COUNT(*) FROM licencas WHERE status = 'ativa'").fetchone()[0]
-        pendentes = cursor.execute("SELECT COUNT(*) FROM licencas WHERE status = 'pendente'").fetchone()[0]
+        total = cursor.execute('SELECT COUNT(*) AS count FROM licencas').fetchone()
+        total = total['count'] if isinstance(total, dict) else total[0]
+        ativas = cursor.execute("SELECT COUNT(*) AS count FROM licencas WHERE status = 'ativa'").fetchone()
+        ativas = ativas['count'] if isinstance(ativas, dict) else ativas[0]
+        pendentes = cursor.execute("SELECT COUNT(*) AS count FROM licencas WHERE status = 'pendente'").fetchone()
+        pendentes = pendentes['count'] if isinstance(pendentes, dict) else pendentes[0]
         
         db.close()
         
