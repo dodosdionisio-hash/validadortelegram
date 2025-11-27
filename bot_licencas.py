@@ -5,6 +5,7 @@ Execute este arquivo para iniciar o bot
 
 import os
 import telebot
+import sqlite3
 from telebot import types
 import sqlite3
 from datetime import datetime, timedelta
@@ -43,11 +44,34 @@ except Exception:
 def _is_postgres():
     return bool(os.environ.get("DATABASE_URL")) and (psycopg2 is not None)
 
+class DB:
+    def __init__(self, conn, is_pg):
+        self.conn = conn
+        self.is_pg = is_pg
+        if not is_pg:
+            # sqlite: permitir acesso por nome
+            self.conn.row_factory = sqlite3.Row
+
+    def execute(self, sql, params=()):
+        cur = self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) if self.is_pg else self.conn.cursor()
+        if self.is_pg:
+            sql = sql.replace('?', '%s')
+        cur.execute(sql, params)
+        return cur
+
+    def commit(self):
+        self.conn.commit()
+
+    def close(self):
+        try:
+            self.conn.close()
+        except:
+            pass
+
 if _is_postgres():
-    db = psycopg2.connect(os.environ.get("DATABASE_URL"))
+    db = DB(psycopg2.connect(os.environ.get("DATABASE_URL")), True)
 else:
-    db = sqlite3.connect('licencas.db', check_same_thread=False)
-    db.row_factory = sqlite3.Row
+    db = DB(sqlite3.connect('licencas.db', check_same_thread=False), False)
 
 # Criar tabela de licenças
 db.execute('''
@@ -418,15 +442,12 @@ def cmd_bloquear(message):
         
         # Bloqueia
         obs = f"Bloqueada em {datetime.now().strftime('%d/%m/%Y %H:%M')}: {motivo}"
-        if _is_postgres():
-            db.cursor().execute("UPDATE licencas SET status = 'revogada', observacoes = %s WHERE codigo = %s", (obs, codigo))
-        else:
-            db.execute('''
-                UPDATE licencas 
-                SET status = 'revogada', 
+        db.execute('''
+            UPDATE licencas 
+            SET status = 'revogada', 
                 observacoes = ?
-                WHERE codigo = ?
-            ''', (obs, codigo))
+            WHERE codigo = ?
+        ''', (obs, codigo))
         db.commit()
         
         bot.reply_to(message, f"🔒 Licença `{codigo}` de *{lic['cliente']}* bloqueada!\n📝 Motivo: {motivo}", parse_mode='Markdown')
@@ -464,15 +485,12 @@ def cmd_desbloquear(message):
         # Desbloqueia
         novo_status = 'ativa' if lic['hwid'] else 'pendente'
         obs = f"Desbloqueada em {datetime.now().strftime('%d/%m/%Y %H:%M')}"
-        if _is_postgres():
-            db.cursor().execute("UPDATE licencas SET status = %s, observacoes = %s WHERE codigo = %s", (novo_status, obs, codigo))
-        else:
-            db.execute('''
-                UPDATE licencas 
-                SET status = ?,
+        db.execute('''
+            UPDATE licencas 
+            SET status = ?,
                 observacoes = ?
-                WHERE codigo = ?
-            ''', (novo_status, obs, codigo))
+            WHERE codigo = ?
+        ''', (novo_status, obs, codigo))
         db.commit()
         
         bot.reply_to(message, f"🔓 Licença `{codigo}` de *{lic['cliente']}* desbloqueada!\n🔑 Status: {novo_status}", parse_mode='Markdown')
@@ -505,17 +523,14 @@ def cmd_transferir(message):
         
         # Reseta HWID e marca como pendente
         obs = f"Transferência autorizada em {datetime.now().strftime('%d/%m/%Y %H:%M')}"
-        if _is_postgres():
-            db.cursor().execute("UPDATE licencas SET status = 'pendente', hwid = NULL, data_ativacao = NULL, observacoes = %s WHERE codigo = %s", (obs, codigo))
-        else:
-            db.execute('''
-                UPDATE licencas 
-                SET status = 'pendente',
-                    hwid = NULL,
-                    data_ativacao = NULL,
-                    observacoes = ?
-                WHERE codigo = ?
-            ''', (obs, codigo))
+        db.execute('''
+            UPDATE licencas 
+            SET status = 'pendente',
+                hwid = NULL,
+                data_ativacao = NULL,
+                observacoes = ?
+            WHERE codigo = ?
+        ''', (obs, codigo))
         db.commit()
         
         bot.reply_to(message, f"🔄 Licença `{codigo}` de *{lic['cliente']}* liberada para transferência!\n\n✅ O cliente pode ativar em outro computador agora.", parse_mode='Markdown')
@@ -548,15 +563,12 @@ def cmd_revogar(message):
         
         # Revoga
         obs = f"Revogada permanentemente em {datetime.now().strftime('%d/%m/%Y %H:%M')}"
-        if _is_postgres():
-            db.cursor().execute("UPDATE licencas SET status = 'revogada', observacoes = %s WHERE codigo = %s", (obs, codigo))
-        else:
-            db.execute('''
-                UPDATE licencas 
-                SET status = 'revogada', 
-                    observacoes = ?
-                WHERE codigo = ?
-            ''', (obs, codigo))
+        db.execute('''
+            UPDATE licencas 
+            SET status = 'revogada', 
+                observacoes = ?
+            WHERE codigo = ?
+        ''', (obs, codigo))
         db.commit()
         
         bot.reply_to(message, f"❌ Licença `{codigo}` de *{lic['cliente']}* REVOGADA PERMANENTEMENTE!", parse_mode='Markdown')
