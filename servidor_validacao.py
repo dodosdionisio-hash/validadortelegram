@@ -4,37 +4,67 @@ Roda em paralelo com o bot para receber requisições HTTP dos clientes
 """
 
 from flask import Flask, request, jsonify
+import os
 import sqlite3
 from datetime import datetime, timedelta
 import hashlib
+try:
+    import psycopg2
+    import psycopg2.extras
+except Exception:
+    psycopg2 = None
 
 app = Flask(__name__)
 
 # Chave secreta (DEVE SER A MESMA!)
-CHAVE_SECRETA = "CRIATIVA_2025_LICENCA_SEGURA_XYZ789_PRIVADA"
+CHAVE_SECRETA = os.environ.get("LICENCA_SECRET", "CRIATIVA_2025_LICENCA_SEGURA_XYZ789_PRIVADA")
 
 # Grace period (dias offline permitidos)
 GRACE_PERIOD_DIAS = 30
 
 
+def _is_postgres():
+    return bool(os.environ.get("DATABASE_URL")) and (psycopg2 is not None)
+
 def init_db():
-    """Garante que a tabela de licenças exista (mesmo schema do bot)."""
-    db = sqlite3.connect('licencas.db')
-    db.execute('''
-        CREATE TABLE IF NOT EXISTS licencas (
-            codigo TEXT PRIMARY KEY,
-            cliente TEXT NOT NULL,
-            dias_validade INTEGER NOT NULL,
-            data_criacao TEXT NOT NULL,
-            data_expiracao TEXT NOT NULL,
-            hwid TEXT,
-            data_ativacao TEXT,
-            status TEXT NOT NULL,
-            observacoes TEXT
+    """Garante que a tabela de licenças exista (Postgres ou SQLite)."""
+    if _is_postgres():
+        conn = psycopg2.connect(os.environ.get("DATABASE_URL"))
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS licencas (
+                codigo TEXT PRIMARY KEY,
+                cliente TEXT NOT NULL,
+                dias_validade INTEGER NOT NULL,
+                data_criacao TEXT NOT NULL,
+                data_expiracao TEXT NOT NULL,
+                hwid TEXT,
+                data_ativacao TEXT,
+                status TEXT NOT NULL,
+                observacoes TEXT
+            )
+            """
         )
-    ''')
-    db.commit()
-    db.close()
+        conn.commit()
+        conn.close()
+    else:
+        db = sqlite3.connect('licencas.db')
+        db.execute('''
+            CREATE TABLE IF NOT EXISTS licencas (
+                codigo TEXT PRIMARY KEY,
+                cliente TEXT NOT NULL,
+                dias_validade INTEGER NOT NULL,
+                data_criacao TEXT NOT NULL,
+                data_expiracao TEXT NOT NULL,
+                hwid TEXT,
+                data_ativacao TEXT,
+                status TEXT NOT NULL,
+                observacoes TEXT
+            )
+        ''')
+        db.commit()
+        db.close()
 
 
 # Garante que o banco esteja pronto ao iniciar o servidor
@@ -42,10 +72,14 @@ init_db()
 
 
 def get_db():
-    """Conecta ao banco de licenças do bot"""
-    db = sqlite3.connect('licencas.db')
-    db.row_factory = sqlite3.Row
-    return db
+    """Conecta ao banco de licenças (Postgres se disponível, senão SQLite)."""
+    if _is_postgres():
+        conn = psycopg2.connect(os.environ.get("DATABASE_URL"))
+        return conn
+    else:
+        db = sqlite3.connect('licencas.db')
+        db.row_factory = sqlite3.Row
+        return db
 
 
 def gerar_assinatura(codigo, hwid, data_expiracao):
@@ -71,10 +105,11 @@ def ativar_licenca():
             }), 400
         
         db = get_db()
-        cursor = db.cursor()
+        cursor = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) if _is_postgres() else db.cursor()
         
         # Busca a licença
-        cursor.execute('SELECT * FROM licencas WHERE codigo = ?', (codigo,))
+        q_sel = 'SELECT * FROM licencas WHERE codigo = %s' if _is_postgres() else 'SELECT * FROM licencas WHERE codigo = ?'
+        cursor.execute(q_sel, (codigo,))
         licenca = cursor.fetchone()
         
         if not licenca:
@@ -113,13 +148,12 @@ def ativar_licenca():
         
         # Ativa a licença
         data_ativacao = datetime.now().strftime('%Y-%m-%d')
-        cursor.execute('''
-            UPDATE licencas 
-            SET status = 'ativa',
-                hwid = ?,
-                data_ativacao = ?
-            WHERE codigo = ?
-        ''', (hwid, data_ativacao, codigo))
+        q_up = (
+            "UPDATE licencas SET status = 'ativa', hwid = %s, data_ativacao = %s WHERE codigo = %s"
+            if _is_postgres() else
+            "UPDATE licencas SET status = 'ativa', hwid = ?, data_ativacao = ? WHERE codigo = ?"
+        )
+        cursor.execute(q_up, (hwid, data_ativacao, codigo))
         db.commit()
         db.close()
         
@@ -159,17 +193,18 @@ def validar_licenca():
             }), 400
         
         db = get_db()
-        cursor = db.cursor()
+        cursor = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) if _is_postgres() else db.cursor()
         
         # Busca a licença
-        cursor.execute('SELECT * FROM licencas WHERE codigo = ?', (codigo,))
+        q_sel = 'SELECT * FROM licencas WHERE codigo = %s' if _is_postgres() else 'SELECT * FROM licencas WHERE codigo = ?'
+        cursor.execute(q_sel, (codigo,))
         licenca = cursor.fetchone()
         
         if not licenca:
             return jsonify({
                 'valida': False,
                 'erro': 'Licença não encontrada',
-                'bloqueada': True
+                'bloqueada': False
             }), 404
         
         # Verifica se está revogada
@@ -182,22 +217,11 @@ def validar_licenca():
         
         # Verifica HWID
         if licenca['hwid'] != hwid:
-            # HWID diferente - BLOQUEIA!
-            cursor.execute('''
-                UPDATE licencas 
-                SET status = 'revogada',
-                    observacoes = 'Bloqueada automaticamente: tentativa de uso em outro PC em ' || datetime('now', 'localtime')
-                WHERE codigo = ?
-            ''', (codigo,))
-            db.commit()
             db.close()
-            
-            print(f"🔒 LICENÇA BLOQUEADA: {codigo} | HWID esperado: {licenca['hwid'][:16]}... | HWID recebido: {hwid[:16]}...")
-            
             return jsonify({
                 'valida': False,
-                'erro': 'Licença bloqueada: detectado uso em computador não autorizado',
-                'bloqueada': True
+                'erro': 'HWID diferente do autorizado',
+                'bloqueada': False
             }), 403
         
         # Verifica expiração
@@ -236,7 +260,7 @@ def status():
     """Status do servidor"""
     try:
         db = get_db()
-        cursor = db.cursor()
+        cursor = db.cursor(cursor_factory=psycopg2.extras.RealDictCursor) if _is_postgres() else db.cursor()
         
         total = cursor.execute('SELECT COUNT(*) FROM licencas').fetchone()[0]
         ativas = cursor.execute("SELECT COUNT(*) FROM licencas WHERE status = 'ativa'").fetchone()[0]

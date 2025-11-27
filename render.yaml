@@ -8,3 +8,11 @@ services:
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
+      - key: DATABASE_URL
+        value: ""
+      - key: LICENCA_SECRET
+        value: ""
+      - key: BOT_TOKEN
+        value: ""
+      - key: RENDER_HEALTH_URL
+        value: "https://validadortelegram.onrender.com/health"
